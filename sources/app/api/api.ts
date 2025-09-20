@@ -1,4 +1,5 @@
 import fastify from "fastify";
+import cors from "@fastify/cors";
 import { log, logger } from "@/utils/log";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import { onShutdown } from "@/utils/shutdown";
@@ -32,10 +33,10 @@ export async function startApi() {
         loggerInstance: logger,
         bodyLimit: 1024 * 1024 * 100, // 100MB
     });
-    app.register(import('@fastify/cors'), {
+    app.register(cors, {
         origin: '*',
         allowedHeaders: '*',
-        methods: ['GET', 'POST', 'DELETE']
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH']
     });
     app.get('/', function (request, reply) {
         reply.send('Welcome to Happy Server!');
