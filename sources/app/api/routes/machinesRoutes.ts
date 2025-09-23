@@ -172,4 +172,40 @@ export function machinesRoutes(app: Fastify) {
         };
     });
 
+    // DELETE /v1/machines/:id - Delete machine by ID
+    app.delete('/v1/machines/:id', {
+        preHandler: app.authenticate,
+        schema: {
+            params: z.object({
+                id: z.string()
+            })
+        }
+    }, async (request, reply) => {
+        const userId = request.userId;
+        const { id } = request.params;
+
+        // Check if machine exists
+        const machine = await db.machine.findFirst({
+            where: {
+                accountId: userId,
+                id: id
+            }
+        });
+
+        if (!machine) {
+            return reply.code(404).send({ error: 'Machine not found' });
+        }
+
+        // Delete the machine
+        await db.machine.delete({
+            where: {
+                id: machine.id
+            }
+        });
+
+        log({ module: 'machines', machineId: id, userId }, 'Machine deleted');
+
+        return reply.code(204).send();
+    });
+
 }
