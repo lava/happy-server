@@ -184,7 +184,16 @@ export function machinesRoutes(app: Fastify) {
         const userId = request.userId;
         const { id } = request.params;
 
-        // Check if machine exists
+        // First check if machine exists at all
+        const machineExists = await db.machine.findFirst({
+            where: { id: id }
+        });
+
+        if (!machineExists) {
+            return reply.code(404).send({ error: 'Machine not found' });
+        }
+
+        // Check if user owns the machine
         const machine = await db.machine.findFirst({
             where: {
                 accountId: userId,
@@ -193,7 +202,7 @@ export function machinesRoutes(app: Fastify) {
         });
 
         if (!machine) {
-            return reply.code(404).send({ error: 'Machine not found' });
+            return reply.code(403).send({ error: 'Permission denied: You do not own this machine' });
         }
 
         // Delete the machine
