@@ -10,6 +10,7 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
             const { method } = data;
 
             if (!method || typeof method !== 'string') {
+                log({ module: 'websocket-rpc', level: 'error' }, `Invalid RPC registration: missing or invalid method name`);
                 socket.emit('rpc-error', { type: 'register', error: 'Invalid method name' });
                 return;
             }
@@ -17,17 +18,24 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
             // Check if method was already registered
             const previousSocket = rpcListeners.get(method);
             if (previousSocket && previousSocket !== socket) {
-                // log({ module: 'websocket-rpc' }, `RPC method ${method} re-registered: ${previousSocket.id} -> ${socket.id}`);
+                log({ module: 'websocket-rpc' }, `RPC method ${method} re-registered: ${previousSocket.id} -> ${socket.id}`);
             }
 
             // Register this socket as the listener for this method
             rpcListeners.set(method, socket);
 
             socket.emit('rpc-registered', { method });
-            // log({ module: 'websocket-rpc' }, `RPC method registered: ${method} on socket ${socket.id} (user: ${userId})`);
-            // log({ module: 'websocket-rpc' }, `Active RPC methods for user ${userId}: ${Array.from(rpcListeners.keys()).join(', ')}`);
+            log({
+                module: 'websocket-rpc',
+                event: 'rpc-registered',
+                method,
+                socketId: socket.id,
+                userId,
+                totalMethods: rpcListeners.size
+            }, `RPC method registered: ${method}`);
+            log({ module: 'websocket-rpc' }, `Active RPC methods for user ${userId}: ${Array.from(rpcListeners.keys()).join(', ')}`);
         } catch (error) {
-            log({ module: 'websocket', level: 'error' }, `Error in rpc-register: ${error}`);
+            log({ module: 'websocket-rpc', level: 'error' }, `Error in rpc-register: ${error}`);
             socket.emit('rpc-error', { type: 'register', error: 'Internal error' });
         }
     });
@@ -68,7 +76,19 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
         try {
             const { method, params } = data;
 
+            // Log incoming RPC call details
+            log({
+                module: 'websocket-rpc',
+                event: 'rpc-call-received',
+                socketId: socket.id,
+                userId,
+                method,
+                paramsPreview: params ? JSON.stringify(params).substring(0, 500) : 'no params',
+                hasCallback: !!callback
+            }, `RPC call received: ${method}`);
+
             if (!method || typeof method !== 'string') {
+                log({ module: 'websocket-rpc', level: 'error' }, `Invalid RPC call: missing method`);
                 if (callback) {
                     callback({
                         ok: false,
@@ -80,7 +100,13 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
 
             const targetSocket = rpcListeners.get(method);
             if (!targetSocket || !targetSocket.connected) {
-                // log({ module: 'websocket-rpc' }, `RPC call failed: Method ${method} not available (disconnected or not registered)`);
+                log({
+                    module: 'websocket-rpc',
+                    level: 'warn',
+                    method,
+                    registered: !!targetSocket,
+                    connected: targetSocket?.connected || false
+                }, `RPC call failed: Method ${method} not available`);
                 if (callback) {
                     callback({
                         ok: false,
@@ -92,7 +118,7 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
 
             // Don't allow calling your own socket
             if (targetSocket === socket) {
-                // log({ module: 'websocket-rpc' }, `RPC call failed: Attempted self-call on method ${method}`);
+                log({ module: 'websocket-rpc', level: 'warn' }, `RPC call failed: Attempted self-call on method ${method}`);
                 if (callback) {
                     callback({
                         ok: false,
@@ -104,7 +130,14 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
 
             // Log RPC call initiation
             const startTime = Date.now();
-            // log({ module: 'websocket-rpc' }, `RPC call initiated: ${socket.id} -> ${method} (target: ${targetSocket.id})`);
+            log({
+                module: 'websocket-rpc',
+                event: 'rpc-forwarding',
+                sourceSocket: socket.id,
+                targetSocket: targetSocket.id,
+                method,
+                userId
+            }, `Forwarding RPC call: ${socket.id} -> ${targetSocket.id} for method ${method}`);
 
             // Forward the RPC request to the target socket using emitWithAck
             try {
@@ -114,10 +147,28 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
                 });
 
                 const duration = Date.now() - startTime;
-                // log({ module: 'websocket-rpc' }, `RPC call succeeded: ${method} (${duration}ms)`);
+
+                // Log response details for debugging
+                log({
+                    module: 'websocket-rpc',
+                    event: 'rpc-response-received',
+                    method,
+                    duration,
+                    responseType: typeof response,
+                    responsePreview: response ? JSON.stringify(response).substring(0, 500) : 'null/undefined',
+                    hasResult: response?.result !== undefined,
+                    hasError: response?.error !== undefined
+                }, `RPC response received for ${method} (${duration}ms)`);
 
                 // Forward the response back to the caller via callback
                 if (callback) {
+                    log({
+                        module: 'websocket-rpc',
+                        event: 'rpc-callback',
+                        method,
+                        sending: true
+                    }, `Sending RPC callback for ${method}`);
+
                     callback({
                         ok: true,
                         result: response
@@ -127,7 +178,16 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
             } catch (error) {
                 const duration = Date.now() - startTime;
                 const errorMsg = error instanceof Error ? error.message : 'RPC call failed';
-                // log({ module: 'websocket-rpc' }, `RPC call failed: ${method} - ${errorMsg} (${duration}ms)`);
+
+                log({
+                    module: 'websocket-rpc',
+                    level: 'error',
+                    event: 'rpc-error',
+                    method,
+                    duration,
+                    error: errorMsg,
+                    errorStack: error instanceof Error ? error.stack : undefined
+                }, `RPC call failed: ${method} - ${errorMsg}`);
 
                 // Timeout or error occurred
                 if (callback) {
@@ -138,7 +198,14 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
                 }
             }
         } catch (error) {
-            // log({ module: 'websocket', level: 'error' }, `Error in rpc-call: ${error}`);
+            log({
+                module: 'websocket-rpc',
+                level: 'error',
+                event: 'rpc-unexpected-error',
+                error: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined
+            }, `Unexpected error in rpc-call handler: ${error}`);
+
             if (callback) {
                 callback({
                     ok: false,
