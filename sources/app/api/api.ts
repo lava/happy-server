@@ -30,7 +30,7 @@ export async function startApi() {
 
     // Start API
     const app = fastify({
-        loggerInstance: logger,
+        logger: false, // Disable built-in request logging
         bodyLimit: 1024 * 1024 * 100, // 100MB
     });
     app.register(cors, {

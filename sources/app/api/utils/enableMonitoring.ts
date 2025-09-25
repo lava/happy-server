@@ -7,6 +7,14 @@ export function enableMonitoring(app: Fastify) {
     // Add metrics hooks
     app.addHook('onRequest', async (request, reply) => {
         request.startTime = Date.now();
+
+        // Compact single-line logging for HTTP requests
+        const method = request.method;
+        const url = request.url;
+        const host = request.headers.host || 'unknown';
+        const remoteAddress = request.ip;
+
+        log(`${method} ${url} from ${remoteAddress} (${host})`);
     });
 
     app.addHook('onResponse', async (request, reply) => {

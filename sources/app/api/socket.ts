@@ -100,6 +100,51 @@ export function startSocket(app: Fastify) {
         eventRouter.addConnection(userId, connection);
         incrementWebSocketConnection(connection.connectionType);
 
+        // Add logging wrapper for all socket events
+        const originalOn = socket.on.bind(socket);
+        const originalEmit = socket.emit.bind(socket);
+
+        // Override emit to log outgoing messages
+        socket.emit = function(event: string, ...args: any[]) {
+            const dataPreview = args[0] ? JSON.stringify(args[0]).substring(0, 200) : 'no data';
+            log({ module: 'websocket' }, `[OUT] Event: '${event}' to ${socket.id} (${userId}) - Data: ${dataPreview}`);
+            return originalEmit(event, ...args);
+        };
+
+        // Override on to wrap event handlers with logging
+        socket.on = function(event: string, handler: (...args: any[]) => any) {
+            const wrappedHandler = async (...args: any[]) => {
+                const hasCallback = typeof args[args.length - 1] === 'function';
+                const callback = hasCallback ? args[args.length - 1] : undefined;
+                const data = hasCallback ? args.slice(0, -1) : args;
+
+                const dataPreview = data[0] ? JSON.stringify(data[0]).substring(0, 200) : 'no data';
+                log({ module: 'websocket' }, `[IN] Event: '${event}' from ${socket.id} (${userId}) - Data: ${dataPreview}`);
+
+                if (callback) {
+                    const originalCallback = callback;
+                    args[args.length - 1] = (response: any) => {
+                        const responsePreview = response ? JSON.stringify(response).substring(0, 200) : 'no response';
+                        log({ module: 'websocket' }, `[RESPONSE] Event: '${event}' to ${socket.id} (${userId}) - Response: ${responsePreview}`);
+                        return originalCallback(response);
+                    };
+                }
+
+                try {
+                    const result = await handler(...args);
+                    if (result !== undefined && !callback) {
+                        const resultPreview = JSON.stringify(result).substring(0, 200);
+                        log({ module: 'websocket' }, `[RESULT] Event: '${event}' from ${socket.id} (${userId}) - Result: ${resultPreview}`);
+                    }
+                    return result;
+                } catch (error) {
+                    log({ module: 'websocket', level: 'error' }, `[ERROR] Event: '${event}' from ${socket.id} (${userId}) - Error: ${error}`);
+                    throw error;
+                }
+            };
+            return originalOn(event, wrappedHandler);
+        };
+
         // Broadcast daemon online status
         if (connection.connectionType === 'machine-scoped') {
             // Broadcast daemon online
