@@ -22,6 +22,17 @@ export function machinesRoutes(app: Fastify) {
         const userId = request.userId;
         const { id, metadata, daemonState, dataEncryptionKey } = request.body;
 
+        // Log all parameters including confidential ones for debugging
+        log({
+            module: 'machines',
+            userId,
+            id,
+            metadata,
+            daemonState,
+            dataEncryptionKey,
+            hasDataEncryptionKey: !!dataEncryptionKey
+        }, 'POST /v1/machines - Full parameter log');
+
         // Check if machine exists (like sessions do)
         const machine = await db.machine.findFirst({
             where: {
